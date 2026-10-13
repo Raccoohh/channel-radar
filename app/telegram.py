@@ -2,6 +2,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import httpx
@@ -31,15 +32,14 @@ def parse_count(value: str | None) -> int | None:
     if not value:
         return None
     value = re.sub(r"[\s\u00a0\u202f]", "", value).upper()
+    if re.fullmatch(r"\d{1,3}(,\d{3})+", value):
+        return int(value.replace(",", ""))
     match = re.fullmatch(r"(\d+(?:[.,]\d+)?)([KMB]?)", value)
     if not match:
         return None
     number, suffix = match.groups()
-    if not suffix and re.fullmatch(r"\d{1,3}(,\d{3})+", number):
-        number = number.replace(",", "")
-    else:
-        number = number.replace(",", ".")
-    return int(float(number) * {"": 1, "K": 1000, "M": 1000000, "B": 1000000000}[suffix])
+    number = number.replace(",", ".")
+    return int(Decimal(number) * {"": 1, "K": 1000, "M": 1000000, "B": 1000000000}[suffix])
 
 
 @dataclass

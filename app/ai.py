@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import timedelta
 
 import httpx
@@ -8,6 +9,8 @@ from sqlalchemy import func, select, update
 from app.analytics import period_start
 from app.db import utcnow
 from app.models import Control, Digest, Post
+
+logger = logging.getLogger(__name__)
 
 
 class AIUnavailable(Exception):
@@ -45,6 +48,7 @@ class GeminiProvider:
             if response.status_code == 429:
                 raise AIUnavailable("AI quota reached. Please try again later.")
             if response.status_code != 200:
+                logger.warning("Gemini request failed with HTTP %s", response.status_code)
                 raise AIUnavailable("AI provider is unavailable. The dashboard remains available.")
             data = response.json()
             candidate = data["candidates"][0]

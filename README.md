@@ -1,6 +1,6 @@
 # Channel Radar
 
-**Live service: deployment in progress; no verified public URL yet.**
+**Live application: [Channel Radar](https://channel-radar-0o24.onrender.com)**
 
 [GitHub repository](https://github.com/Raccoohh/channel-radar)
 
@@ -117,7 +117,8 @@ handling of 429, HTTP failures, missing key, blocked/truncated or malformed outp
 An older saved digest remains visible with its generation time. Provider failure never
 prevents access to the rest of the dashboard. Media content is not sent to Gemini.
 The free Gemini tier may use input/output to improve Google's products; only public channel
-text is submitted. Model access and actual quota still require a live account check.
+text is submitted. The configured free-tier key was verified with a live response; quotas
+and temporary model availability remain provider-dependent.
 
 ## Verification
 
@@ -155,6 +156,11 @@ checks database access and migrated control state. `.dockerignore` excludes cred
    an additional database snapshot. The hourly cron is at minute 17 to avoid peak load.
 6. Open the public URL, add a channel, inspect post details and digest, then restart and
    verify that channels/posts/history survive. Repeat after the final deployment.
+
+The running service uses Render Free and Neon Free in Frankfurt. It was created using the
+public Git repository URL. To release a new commit, use Render **Manual Deploy → Deploy
+latest commit**; GitHub CI alone does not prove that production has the latest commit.
+`PUBLIC_URL` must match Render's assigned domain exactly, including its generated suffix.
 
 Free-plan facts checked on 2026-10-13:
 

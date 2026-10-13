@@ -5,6 +5,7 @@ import subprocess
 
 patterns = [
     rb"AIza[0-9A-Za-z_-]{30,}",
+    rb"AQ\.[0-9A-Za-z_-]{30,}",
     rb"sk-(?:proj-)?[A-Za-z0-9_-]{30,}",
     rb"gh[pousr]_[A-Za-z0-9]{30,}",
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
