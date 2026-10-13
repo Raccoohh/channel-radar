@@ -1,4 +1,5 @@
 """Fail on credential-shaped strings in staged files without printing their values."""
+
 import re
 import subprocess
 

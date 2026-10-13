@@ -150,9 +150,13 @@ async def test_bounded_catchup_resumes(sessions, source, monkeypatch):
     with sessions() as db:
         c = db.get(Channel, channel_id)
         assert c.backfill_before == 40 and c.last_message_id == 10
+        assert c.catchup_target == 100
+    # New arrivals during catch-up must not advance the completed high-water
+    # past the saved target: unseen IDs 101..138 need a subsequent scan.
+    pages[None] = batch([139, 140])
     make_due(sessions, channel_id)
     assert await collector.collect(channel_id)
     with sessions() as db:
         c = db.get(Channel, channel_id)
         assert c.backfill_before is None and c.last_message_id == 100
-        assert db.scalar(select(func.count(Post.id))) == 10
+        assert db.scalar(select(func.count(Post.id))) == 12
