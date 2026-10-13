@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">YOUR SIGNAL, IN ONE PLACE</div><h1>Channel overview</h1><p>Follow the conversation. Understand what changes.</p></div><span class="badge"><span class="live-dot"></span> Automatically collected</span></div>
+<section class="stats-grid">
+ <article class="stat"><span>Tracked channels</span><strong>{{ rows|length }} <small>/ {{ max_channels }}</small></strong><p>Public channels in this workspace</p></article>
+ <article class="stat"><span>Collected posts</span><strong>{{ total_posts|number }}</strong><p>Unique posts, preserved over time</p></article>
+ <article class="stat"><span>Healthy sources</span><strong>{{ healthy }} <small>/ {{ rows|length }}</small></strong><p>Latest collection completed</p></article>
+</section>
+<section class="panel add-panel"><div><h2>Add a channel</h2><p>Start with a public username. We'll collect its latest posts.</p></div><form action="/channels" method="post" id="add-channel"><label class="sr-only" for="username">Telegram channel</label><input id="username" name="username" placeholder="@durov or t.me/channel" maxlength="120" required autocomplete="off"><button type="submit">＋ Add channel</button></form></section>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<section class="panel"><div class="panel-heading"><h2>Your channels <span class="count">{{ rows|length }}</span></h2><span class="muted">Refreshes automatically</span></div>
+{% if rows %}<div class="table-wrap"><table><thead><tr><th>Channel</th><th>Subscribers</th><th>Posts</th><th>Last successful collection</th><th>Source health</th></tr></thead><tbody>
+{% for channel, count in rows %}<tr><td><a class="channel-identity" href="/channels/{{ channel.id }}"><span class="avatar">{{ channel.username[:2]|upper }}</span><span><strong>{{ channel.title or channel.username }}</strong><small>@{{ channel.username }}</small></span></a></td><td>{{ channel.subscribers|number }}</td><td>{{ count|number }}</td><td class="muted">{{ channel.last_success_at|stamp }}</td><td><span class="status {{ channel.status }}">{{ channel.status|replace('_',' ')|title }}</span>{% if channel.last_error %}<small class="source-error">{{ channel.last_error }}</small>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="empty"><div class="empty-icon">◎</div><h3>Your radar starts here</h3><p>Add your first public channel to see real posts,<br>metric history and AI-powered summaries.</p></div>{% endif %}</section>
+<div class="note"><span>ⓘ</span><p>First collection starts in the background. Telegram may hide some metrics; we never replace them with estimated activity. Subscriber and view counts shown by Telegram may be rounded.</p></div>
+<div id="poll-state" data-poll="overview" data-initial="{{ poll_state|tojson|forceescape }}"></div>
+{% endblock %}

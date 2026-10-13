@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Channel Radar{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script src="{{ url_for('static', path='app.js') }}" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="radar">◉</span> channel<span>radar</span></a>
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav-item active" href="/"><span>▦</span> Overview</a>
+    <div class="sidebar-bottom"><span class="live-dot"></span> Public Telegram insights<br><small>No Telegram API keys needed</small></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span>Workspace <span class="slash">/</span> {% block breadcrumb %}Overview{% endblock %}</span><span class="pill">PUBLIC PREVIEW DATA</span></header>
+    <main>{% block content %}{% endblock %}</main>
+    <footer>Channel Radar <span>Observed metrics · UTC timestamps · Missing data stays N/A</span></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+name: Collect channels
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: scheduled-collection
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wake service and collect due channels
+        env:
+          RADAR_URL: ${{ vars.RADAR_URL }}
+          SCHEDULER_TOKEN: ${{ secrets.SCHEDULER_TOKEN }}
+        run: |
+          test -n "$RADAR_URL" && test -n "$SCHEDULER_TOKEN"
+          curl --fail --silent --show-error --connect-timeout 20 --max-time 120 \
+            --retry 3 --retry-delay 10 --retry-all-errors "$RADAR_URL/healthz"
+          curl --fail --silent --show-error --connect-timeout 20 --max-time 480 \
+            --retry 1 --retry-delay 10 --retry-all-errors -X POST \
+            -H "Authorization: Bearer $SCHEDULER_TOKEN" "$RADAR_URL/internal/collect"

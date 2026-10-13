@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: channel-radar
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.lock && pip install --no-deps .
+    startCommand: python -m alembic upgrade head && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.6
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: SCHEDULER_TOKEN
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false
