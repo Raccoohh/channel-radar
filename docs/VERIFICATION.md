@@ -6,7 +6,28 @@ Application: https://channel-radar-0o24.onrender.com
 
 Repository: https://github.com/Raccoohh/channel-radar
 
-## Local audit remediation — pending release approval
+## Scheduler release — pre-publication evidence and acceptance gates
+
+Updated 2026-10-15. Audit remediation B01–B07 was published as `d082255`:
+[CI passed](https://github.com/Raccoohh/channel-radar/actions/runs/38595394304), and Render
+deployed that exact commit. Production forms, snapshots, cached AI and error handling were
+verified. A later [scheduled busy response](https://github.com/Raccoohh/channel-radar/actions/runs/38604420465)
+and [readiness timeout](https://github.com/Raccoohh/channel-radar/actions/runs/38634190435)
+prevent unconditional production acceptance.
+
+The local scheduler follow-up adds bounded readiness and correlated busy observation:
+**189 offline tests passed**, Ruff lint/format passed (34 Python files), combined coverage
+for `app` and `scripts.scheduled_collect` **92%** (900 statements, 244 branches).
+Disposable PostgreSQL 18.4 migrations/check/downgrade/upgrade and expanded smoke passed,
+including the real ASGI status contract and scheduler exit codes for busy success/failure.
+SQLite migration checks also passed. No model, migration, provider, dependency or Render
+configuration changes are required. Existing 139 tests remain unchanged.
+
+These are pre-publication results. The owner authorized publication on 2026-10-15; hosted CI,
+deployed SHA, actual Render cold wake and a natural scheduled run require release acceptance.
+Details and acceptance gates: [scheduler reliability](SCHEDULER-RELIABILITY.md).
+
+## Historical local audit remediation — recorded before release approval
 
 On 2026-10-14, local changes based on `dfb2323` address audit findings B01–B07.
 These results do **not** describe a new production deployment:

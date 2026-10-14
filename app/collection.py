@@ -1,6 +1,8 @@
 import asyncio
 import logging
+from collections import OrderedDict
 from datetime import timedelta
+from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy import or_, select, update
@@ -17,6 +19,25 @@ class Collector:
         self.sessions, self.source, self.interval = sessions, source, interval
         self.wake = asyncio.Event()
         self.local_lock = asyncio.Lock()
+        # Process-scoped cycle receipts, not database lease tokens. A restart loses
+        # receipts and must be reported as unknown, never as a successful no-op.
+        self.active_cycle = None
+        self.cycles = OrderedDict()
+
+    def _prune_cycles(self):
+        now = monotonic()
+        for cycle_id, receipt in list(self.cycles.items()):
+            if cycle_id != self.active_cycle and (
+                now - receipt["updated"] > 1800 or len(self.cycles) > 256
+            ):
+                del self.cycles[cycle_id]
+
+    def cycle_status(self, cycle_id):
+        self._prune_cycles()
+        receipt = self.cycles.get(cycle_id)
+        if receipt is None:
+            return None
+        return {"run_id": cycle_id, "state": receipt["state"], **receipt["result"]}
 
     def _claim(self, channel_id, token):
         now = utcnow()
@@ -216,14 +237,38 @@ class Collector:
     async def collect_due(self):
         result = dict(attempted=0, succeeded=0, failed=0, skipped=0, busy=False, collected=0)
         if self.local_lock.locked():
-            return {**result, "busy": True}
+            return {**result, "busy": True, "run_id": self.active_cycle}
         async with self.local_lock:
-            for channel_id in await run_db(self._due_ids):
-                outcome = await self._collect(channel_id)
-                result[outcome] += 1
-            result["attempted"] = result["succeeded"] + result["failed"]
-            result["collected"] = result["succeeded"]
-            return result
+            cycle_id = str(uuid4())
+            self.active_cycle = cycle_id
+            receipt = {"state": "running", "result": result, "updated": monotonic()}
+            self.cycles[cycle_id] = receipt
+            self._prune_cycles()
+            logger.info("collection_cycle_started run_id=%s", cycle_id)
+            try:
+                for channel_id in await run_db(self._due_ids):
+                    outcome = await self._collect(channel_id)
+                    result[outcome] += 1
+                    result["attempted"] = result["succeeded"] + result["failed"]
+                    result["collected"] = result["succeeded"]
+                # A skipped lease/cooldown race does not confirm its owner's result.
+                receipt["state"] = "failed" if result["failed"] or result["skipped"] else "success"
+                return result
+            except BaseException:
+                receipt["state"] = "failed"
+                raise
+            finally:
+                receipt["updated"] = monotonic()
+                self.active_cycle = None
+                logger.info(
+                    "collection_cycle_finished run_id=%s state=%s "
+                    "attempted=%s failed=%s skipped=%s",
+                    cycle_id,
+                    receipt["state"],
+                    result["attempted"],
+                    result["failed"],
+                    result["skipped"],
+                )
 
     async def run(self):
         while True:

@@ -3,14 +3,17 @@
 import asyncio
 from unittest.mock import AsyncMock
 
+import httpx
 from sqlalchemy import func, select
 
 from app.ai import AIUnavailable, DigestService
 from app.collection import Collector
 from app.config import Settings
 from app.db import make_database, utcnow
+from app.main import create_app
 from app.models import Channel, Digest, Post, PostMetric
 from app.telegram import ParsedChannel, ParsedPost, SourceError
+from scripts.scheduled_collect import run_from_env
 
 
 async def main():
@@ -88,8 +91,58 @@ async def main():
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+    # Use the actual ASGI status contract and scheduler client against PostgreSQL.
+    parsed.posts[0].published_at = utcnow()
+    for should_fail in (False, True):
+        with sessions.begin() as db:
+            db.get(Channel, cid).next_collection_at = utcnow()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed_fetch(*args, entered=entered, release=release, should_fail=should_fail):
+            entered.set()
+            await release.wait()
+            if should_fail:
+                raise SourceError("Synthetic scheduled failure")
+            return parsed
+
+        source.fetch.side_effect = delayed_fetch
+        app = create_app(
+            Settings(_env_file=None, worker_enabled=False, scheduler_token="ci-only"),
+            sessions,
+            source,
+            provider,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://smoke.test"
+            ) as client,
+        ):
+            task = asyncio.create_task(app.state.collector.collect_due())
+
+            async def release_cycle(_, release=release, task=task):
+                release.set()
+                await task
+
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                code = await run_from_env(
+                    {"RADAR_URL": "https://smoke.test", "SCHEDULER_TOKEN": "ci-only"},
+                    client,
+                    sleep=release_cycle,
+                )
+                assert code == int(should_fail)
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+    with sessions() as db:
+        assert db.scalar(select(func.count(Post.id))) == 1
+        assert db.scalar(select(func.count(PostMetric.id))) == 4
     engine.dispose()
-    print("PostgreSQL concurrency, snapshots, partial failure, rollback and AI cache smoke passed")
+    print(
+        "PostgreSQL concurrency, snapshots, rollback, AI cache and scheduler receipts smoke passed"
+    )
 
 
 if __name__ == "__main__":

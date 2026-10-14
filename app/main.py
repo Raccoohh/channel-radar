@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
@@ -339,12 +340,23 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
         except AIUnavailable as exc:
             return JSONResponse({"detail": str(exc)}, status_code=503)
 
-    @app.post("/internal/collect")
-    async def scheduled_collect(request: Request):
+    def authorize_scheduler(request):
         secret = settings.scheduler_token.get_secret_value()
         supplied = request.headers.get("authorization", "")
         if not secret or not hmac.compare_digest(supplied, f"Bearer {secret}"):
             raise HTTPException(401, "Invalid scheduler credentials.")
+
+    @app.get("/internal/collect/{run_id}")
+    async def collection_status(request: Request, run_id: UUID):
+        authorize_scheduler(request)
+        result = app.state.collector.cycle_status(str(run_id))
+        if result is None:
+            raise HTTPException(404, "Collection result unavailable; it cannot be confirmed.")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/internal/collect")
+    async def scheduled_collect(request: Request):
+        authorize_scheduler(request)
         # Wait for completion: a success response is not just an in-memory queue acknowledgement.
         result = await app.state.collector.collect_due()
         status = 503 if result["failed"] else 409 if result["busy"] else 200

@@ -199,10 +199,38 @@ recovery after downtime. Neither mechanism guarantees collection during provider
 `collected` (a compatibility alias of `succeeded`). `attempted` counts successful and failed
 attempts; lease/cooldown races are skipped. HTTP 200 with zero attempts means nothing was due,
 not that ingestion occurred. HTTP 503 means at least one attempt failed, including partial
-success; HTTP 409 means this process already has a collection cycle running. Both make the
-GitHub workflow fail. The collection POST is deliberately not automatically retried: a second
-call during the failure cooldown could otherwise turn a failed ingestion into a green no-op.
-Inspect channel health/run history before manually rerunning a busy or failed workflow.
+success; HTTP 409 means this process already has a collection cycle running and includes its
+opaque `run_id`. The workflow sends the collection POST **once**. For 409 it polls authenticated
+`GET /internal/collect/{run_id}` until that exact cycle completes. Only `state=success` with a
+consistent summary and no failed/skipped attempts succeeds. Failure, cancellation, an unknown
+receipt or an expired deadline fails the workflow; a later no-op cannot replace that result.
+Normal POST response fields and status codes remain compatible with existing callers.
+
+The status endpoint is read-only, uses the same bearer secret and returns `Cache-Control:
+no-store`. Receipts cover the whole `collect_due` cycle, including channels not yet started,
+and are kept in memory for at most 30 minutes / 256 cycles. They are not database lease tokens.
+With one Uvicorn worker this avoids a new table or migration. Restart, eviction or a request
+routed to another deployment instance returns 404 and **fails closed**: it does not prove the
+run failed or succeeded. Durable per-channel history and lease recovery remain in PostgreSQL.
+This mechanism does not support successful cross-instance receipt recovery.
+
+`python -m scripts.scheduled_collect` reads the existing `RADAR_URL` and `SCHEDULER_TOKEN`.
+It validates an HTTPS origin, does not follow redirects, and logs only phase, method, HTTP
+status, duration, safe error category and opaque cycle ID. It never logs credentials or remote
+bodies. Readiness GETs have a 30-second wall/inactivity timeout (connect at most 10 seconds),
+backoff 2/4/8/15 seconds and a five-minute phase deadline. The entire health/POST/observation
+sequence has an eleven-minute monotonic deadline; the single POST is additionally capped at
+eight minutes. A timed-out POST has an unknown result and is never automatically repeated.
+Status GETs use the same bounded backoff; authentication errors, missing receipts and malformed
+responses fail immediately. GitHub's 15-minute job limit also bounds setup/dependency install.
+True zero-due responses succeed without claiming ingestion. Lease/cooldown skips are unconfirmed
+and fail this client conservatively. No secret, paid service or production config change is needed.
+
+These limits improve diagnosis and bounded recovery; they cannot guarantee Render/network
+availability. On 2026-10-14 a scheduled readiness request timed out twice before collection,
+while another returned busy during successful worker activity. The new client/receipt contract
+has local regression coverage; release acceptance requires a verified deployment and a natural run
+after inactivity. See [scheduler investigation](docs/SCHEDULER-RELIABILITY.md).
 
 ## Scope and limitations
 

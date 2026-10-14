@@ -41,5 +41,5 @@ jobs:
           python-version: '3.14'
       - run: pip install -r requirements.lock && pip install --no-deps -e .
       - run: alembic upgrade head && alembic check
-      - run: python scripts/postgres_smoke.py
+      - run: python -m scripts.postgres_smoke
       - run: alembic downgrade base && alembic upgrade head

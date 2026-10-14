@@ -12,6 +12,7 @@ authority. Never change it to accommodate implementation shortcuts.
 * `analytics.py`: explicit query/arithmetic semantics; no fabricated zero for unknown data.
 * `ai.py`: provider adapter and source-bounded digest/cache/quota policy. Provider can be injected.
 * `main.py`: application lifecycle, HTTP admission, routes, response projection and templates.
+* `scripts/scheduled_collect.py`: bounded external scheduler client; no ingestion or DB access.
 * Templates escape source text; JavaScript uses `textContent`, never HTML from Telegram/LLM.
 
 ## Invariants
@@ -29,6 +30,10 @@ the active DB unit before cleanup; admission units need cleanup for a committed 
 Do not overwrite a committed success during cancellation. Malformed real Telegram messages
 fail the whole observation; never advance catch-up boundaries across a parsing gap.
 Scheduler failures and busy responses must stay distinguishable from a successful no-op.
+Busy observation is correlated to an immutable cycle ID; never substitute the latest run or
+repeat a failed/ambiguous POST. Process-local receipts are bounded and non-durable: restart or
+eviction must fail confirmation, not invent success. Keep the read-only status endpoint bearer
+protected. Deadline/transport logs must exclude credentials, response bodies and exception reprs.
 
 ## Before delivery
 
