@@ -1,34 +1,40 @@
-# Interview preparation
+# Підготовка до співбесіди
 
-1. **Why a monolith?** Ten channels do not justify message brokers or microservices. FastAPI,
-   a bounded collector and PostgreSQL provide independently testable modules in one deployment.
-2. **What is a post's identity?** `(channel_id, message_id)`, enforced by a database unique
-   constraint. Username normalization prevents duplicate channel identities.
-3. **What makes ingestion idempotent?** Existing identities are updated, not inserted again.
-   A new successful observation intentionally adds a snapshot; trigger retries honor due time.
-4. **How are concurrent jobs handled?** A conditional UPDATE acquires a lease, then HTTP runs
-   outside the transaction. A matching token and unexpired lease are required to publish.
-5. **What happens after a crash?** Due dates remain in the DB. After five minutes the lease
-   expires, another worker claims the channel, and the abandoned run becomes interrupted.
-6. **Why both latest values and snapshots?** Latest values make list queries cheap; immutable
-   observations preserve trends. Both are committed atomically to prevent inconsistent views.
-7. **What does null mean?** The source did not expose a metric. It is not zero. Average views
-   divides by posts with a known view count; the UI displays coverage of observed metrics.
-8. **How does incremental collection handle busy channels?** It fetches up to four pages and
-   persists a continuation cursor. A saved initial head prevents new arrivals from causing gaps.
-9. **Does every old post get refreshed?** No. Only posts encountered in preview scans. This
-   keeps free-tier traffic bounded; saved historical observations remain accessible.
-10. **Why external scheduling?** Render sleeps. GitHub Actions wakes the service hourly; the
-    in-process worker handles fast initial collection. Cron is best effort, not guaranteed.
-11. **How is AI cost bounded?** Source character/post caps, output token limit, cached source hash,
-    a 90-second global cooldown, daily attempt budget and no automatic provider retries.
-12. **How do you handle hallucinations and prompt injection?** The prompt treats posts as data,
-    requires attribution and separates interpretation. This reduces risk but is not a proof.
-    Output is escaped; the model has no tools or secrets in its context.
-13. **How do you test without a network?** Socket/DNS guards plus HTTPX mock/ASGI transports.
-    Integration with disposable PostgreSQL runs separately from pytest.
-14. **What protects against SSRF and XSS?** Strict username/host validation, fixed HTTPS Telegram
-    URL, no redirects, and escaped plain text with a restrictive CSP.
-15. **What would you improve for production scale?** Authentication/admission policy, retention,
-    monitoring and provider alerts, more robust source drift detection, and a separate worker
-    when measured throughput or hosting requirements justify it. No premature queue system.
+1. **Чому модульний моноліт?** Для десяти каналів брокер повідомлень і мікросервіси зайві.
+   FastAPI, колектор і PostgreSQL утворюють один deployment із тестованими межами.
+2. **Який природний ключ поста?** `(channel_id, message_id)` з UNIQUE у БД. Нормалізація
+   username запобігає дублюванню каналів через регістр або форму URL.
+3. **Що означає ідемпотентність збору?** Наявний пост оновлюється, новий додається.
+   Повторне спостереження створює snapshot, але не дубль поста. Тригери поважають due time.
+4. **Як захищено конкурентний збір?** Умовний UPDATE отримує lease; HTTP виконується
+   поза транзакцією. Запис дозволено лише власнику актуального token до завершення lease.
+5. **Що буде після падіння процесу?** Due date залишається в PostgreSQL. Через п'ять
+   хвилин lease протерміновується, наступний воркер може перехопити канал, а незавершений
+   запуск позначається interrupted. На sleeping hosting це станеться після wake-up.
+6. **Навіщо latest metrics і snapshots одночасно?** Перші спрощують запити списків,
+   другі зберігають динаміку. Обидва набори даних оновлюються в одній транзакції.
+7. **Чим N/A відрізняється від нуля?** N/A означає відсутність доступної метрики.
+   Average views ділиться лише на кількість постів із відомими переглядами; UI показує coverage.
+8. **Як закриваються великі пропуски постів?** Один запуск читає до чотирьох сторінок.
+   Cursor зберігає позицію, а початкова верхня межа catch-up не дає новим постам спричинити
+   пропуски під час багатокрокового обходу.
+9. **Чи оновлюються всі старі пости?** Лише ті, що зустрілися у preview-скануванні.
+   Старі snapshots зберігаються. Це обмеження трафіку; повний Telegram-архів не обіцяється.
+10. **Чому два механізми запуску?** Внутрішній воркер швидко обробляє доданий канал,
+    GitHub Actions будить Render після сну. Розклад може затримуватися: це best effort.
+    Durable due dates дозволяють надолужувати збір після простою.
+11. **Як обмежено AI-квоти?** До 50 постів, 3 000 символів на пост і 24 000 символів JSON;
+    2 048 вихідних токенів, timeout, кеш за hash джерел/моделі/версії prompt,
+    cooldown 90 секунд і 20 спроб за добу UTC. Автоматичних повторів генерації немає.
+12. **Як зменшено галюцинації та prompt injection?** Пости передаються як недовірені дані;
+    модель має посилатися на IDs і відділяти інтерпретації. Це зменшує ризик, але не доводить
+    фактологічну точність. Модель не має tools або секретів у контексті, її текст екранується.
+13. **Як тестували без мережі?** pytest-socket блокує sockets/DNS; HTTPX MockTransport
+    та ASGITransport замінюють запити. PostgreSQL smoke запускається окремо з mock-джерелом.
+    Справжні Telegram/Gemini/Render перевірялися окремими smoke-сценаріями.
+14. **Що захищає від SSRF та XSS?** Строгий username, allowlist Telegram-хостів,
+    фіксований HTTPS origin колектора і заборона redirects. Telegram/AI текст екранується;
+    JavaScript використовує textContent, CSP забороняє сторонні scripts і framing.
+15. **Що змінити для масштабу?** Автентифікація, admission і retention, моніторинг
+    provider/source drift та вимірювання навантаження. Окремий worker/queue виправданий
+    після появи вимог до throughput; для поточного demo PostgreSQL leases достатньо.

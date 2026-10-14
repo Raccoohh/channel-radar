@@ -35,7 +35,7 @@ belong in this file, GitHub source files or `.env.example`.
 |---|---|
 | `DATABASE_URL` | SQLAlchemy URL; Neon PostgreSQL with `sslmode=require` in production |
 | `GEMINI_API_KEY` | Secret from a free-tier Google AI Studio project; blank means AI unavailable |
-| `GEMINI_MODEL` | `gemini-3.8-flash`; configurable as provider availability changes |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite`; configurable as provider availability changes |
 | `SCHEDULER_TOKEN` | Random secret, at least 32 characters in production |
 | `PUBLIC_URL` | Exact external origin, used to reject cross-origin POST requests |
 | `COLLECTION_INTERVAL_SECONDS` | 3600; minimum 300 |
@@ -45,7 +45,7 @@ belong in this file, GitHub source files or `.env.example`.
 | `ENVIRONMENT` | `development` or `production` |
 
 Set secrets in the hosting dashboard; never paste them into issue reports. The development
-`.env` is ignored. Copy the Render-generated scheduler secret into a GitHub Actions secret
+`.env` is ignored. Store the same random scheduler secret in Render and a GitHub Actions secret
 named `SCHEDULER_TOKEN`. A missing AI key is surfaced honestly; it does not generate a fake digest.
 
 ## Architecture and schema
@@ -187,7 +187,7 @@ one active scrape at a time per process, global admission/AI limits. There is no
 delete/retry endpoint, so anonymous users cannot destroy observations or force repeated jobs.
 This also means an operator must remove erroneous channels using the database if the demo
 fills up. Multi-channel comparisons, alerts, full-history import, media analysis and exports
-are deferred until mandatory deployment acceptance is complete. No Redis/Celery/Kubernetes.
+are outside this implementation's scope. No Redis/Celery/Kubernetes.
 
 An authenticated scheduler does not make a public demo immune to abuse. Channel admission
 is bounded, expensive requests are throttled, hosts are fixed, redirects are not followed,
@@ -195,3 +195,4 @@ and HTML is rendered as escaped text with a restrictive CSP. Production database
 must never be shared publicly. Long-term snapshot retention/archival is an operator task.
 
 [ADRs](docs/adr/) · [Agent conventions](CLAUDE.md) · [Interview preparation](docs/INTERVIEW.md)
+· [Submission message](docs/SUBMISSION.md)

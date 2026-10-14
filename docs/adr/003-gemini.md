@@ -1,8 +1,11 @@
 # ADR 003 — Bounded, cached Gemini channel digests
 
-Status: implemented adapter; live account/model verification pending.
+Status: implemented; live production generation verified on 2026-10-14.
 
 Use Gemini's documented free tier and a simple HTTP adapter rather than a provider SDK.
+The default is `gemini-3.1-flash-lite`, which completed real Ukrainian digests in validation.
+Gemini 3.8 Flash returned overload errors and timed out during acceptance; model selection
+is configuration, so this change required no changes to ingestion or views.
 Inject that boundary in tests. Summarize actual text posts for a chosen period, attribute claims,
 request message-ID citations, and separate facts reported by the channel from interpretation.
 

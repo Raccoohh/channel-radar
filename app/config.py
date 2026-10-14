@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
     database_url: SecretStr = SecretStr("sqlite:///./channel-radar.db")
     gemini_api_key: SecretStr = SecretStr("")
-    gemini_model: str = Field("gemini-3.8-flash", pattern=r"^[a-zA-Z0-9._-]+$")
+    gemini_model: str = Field("gemini-3.1-flash-lite", pattern=r"^[a-zA-Z0-9._-]+$")
     scheduler_token: SecretStr = SecretStr("")
     public_url: str = "http://127.0.0.1:8000"
     collection_interval_seconds: int = Field(3600, ge=300)

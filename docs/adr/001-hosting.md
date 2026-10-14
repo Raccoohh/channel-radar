@@ -1,6 +1,6 @@
 # ADR 001 — Render Free with an independent Neon database
 
-Status: selected; deployment verification pending.
+Status: implemented and verified on Render Free + Neon Free, 2026-10-14.
 
 The product needs a public Python process and persistent cloud data without paid services.
 Render Free supports a normal ASGI app but sleeps and has ephemeral disks. Its free database
