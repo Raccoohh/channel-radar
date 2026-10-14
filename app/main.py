@@ -18,9 +18,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.ai import AIUnavailable, DigestService, GeminiProvider
 from app.analytics import period_start, summary
+from app.body_limit import BodyLimitMiddleware
 from app.collection import Collector
 from app.config import Settings
-from app.db import make_database, utcnow
+from app.db import make_database, run_db, utcnow
 from app.models import Channel, ChannelMetric, CollectionRun, Control, Digest, Post, PostMetric
 from app.telegram import TelegramClient, normalize_username
 
@@ -62,9 +63,10 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
                 with suppress(asyncio.CancelledError):
                     await task
         if engine:
-            engine.dispose()
+            await run_db(engine.dispose)
 
     app = FastAPI(title="Channel Radar", lifespan=lifespan)
+    app.add_middleware(BodyLimitMiddleware)
     app.state.sessions = sessions
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
     templates = Jinja2Templates(directory=ROOT / "templates")
@@ -80,9 +82,6 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
             expected = urlsplit(settings.public_url)
             if origin and origin != f"{expected.scheme}://{expected.netloc}":
                 return JSONResponse({"detail": "Cross-origin request rejected."}, status_code=403)
-            length = request.headers.get("content-length", "0")
-            if not length.isdigit() or int(length) > 4096:
-                return JSONResponse({"detail": "Request too large."}, status_code=413)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -175,15 +174,15 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
     @app.post("/channels")
     async def add_form(request: Request, username: Annotated[str, Form(max_length=120)]):
         try:
-            add_channel(username)
+            await run_db(add_channel, username)
         except HTTPException as exc:
-            return render_overview(request, exc.detail, exc.status_code)
+            return await run_db(render_overview, request, exc.detail, exc.status_code)
         app.state.collector.wake.set()
         return RedirectResponse("/", status_code=303)
 
     @app.post("/api/channels")
     async def add_api(body: ChannelInput):
-        channel, created = add_channel(body.username)
+        channel, created = await run_db(add_channel, body.username)
         app.state.collector.wake.set()
         return JSONResponse(
             {
@@ -322,10 +321,13 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
             ).all()
         return [{"time": p.captured_at, "value": p.views} for p in reversed(points)]
 
-    @app.post("/api/channels/{channel_id}/digest")
-    async def generate_digest(channel_id: int, days: Days = 30):
+    def check_channel(channel_id):
         with sessions() as db:
             get_channel(db, channel_id)
+
+    @app.post("/api/channels/{channel_id}/digest")
+    async def generate_digest(channel_id: int, days: Days = 30):
+        await run_db(check_channel, channel_id)
         try:
             digest = await app.state.digests.generate(channel_id, days)
             return {
@@ -344,7 +346,9 @@ def create_app(settings=None, sessions=None, source=None, provider=None):
         if not secret or not hmac.compare_digest(supplied, f"Bearer {secret}"):
             raise HTTPException(401, "Invalid scheduler credentials.")
         # Wait for completion: a success response is not just an in-memory queue acknowledgement.
-        return await app.state.collector.collect_due()
+        result = await app.state.collector.collect_due()
+        status = 503 if result["failed"] else 409 if result["busy"] else 200
+        return JSONResponse(result, status_code=status)
 
     return app
 

@@ -6,6 +6,27 @@ Application: https://channel-radar-0o24.onrender.com
 
 Repository: https://github.com/Raccoohh/channel-radar
 
+## Local audit remediation — pending release approval
+
+On 2026-10-14, local changes based on `dfb2323` address audit findings B01–B07.
+These results do **not** describe a new production deployment:
+
+* Python 3.14.6: **139 offline tests passed**, including 78 new regression cases.
+  Existing tests remain unchanged. Socket/DNS guards are still enabled.
+* Combined statement/branch coverage: **92%** (728 statements, 188 branches), measured
+  with an external coverage tool; no runtime dependency was added.
+* Ruff lint and formatting passed. Working-tree credential-pattern scan found no matches
+  across tracked and new non-ignored files; all 40 installed locked versions matched.
+* Disposable local PostgreSQL 18.4: upgrade/check/downgrade/upgrade and expanded smoke
+  passed. Checks include concurrent claims, retained snapshots, partial collection failure,
+  atomic rollback, concurrent AI admission and cache reuse. No schema migration is needed.
+* Local browser with synthetic providers: `t.me/durov` form submission, Collecting → Healthy,
+  two fixture posts, metrics, post details and a visible AI failure with a working dashboard.
+  No real Gemini quota was used for remediation tests.
+* Previously captured real public HTML for `durov` and `telegram` still parses 20 posts each.
+* Hosted CI, Render release/commit verification and live acceptance for these changes are
+  pending explicit publication approval. The production observations below are historical.
+
 ## Automated checks
 
 * Local Python 3.14.6: **61 offline pytest cases passed**, without warnings after asserting

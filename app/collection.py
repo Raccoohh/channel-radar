@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import or_, select, update
 
-from app.db import utcnow
+from app.db import run_db, utcnow
 from app.models import Channel, ChannelMetric, CollectionRun, Post, PostMetric
 from app.telegram import SourceError
 
@@ -18,8 +18,8 @@ class Collector:
         self.wake = asyncio.Event()
         self.local_lock = asyncio.Lock()
 
-    async def collect(self, channel_id: int) -> bool:
-        now, token = utcnow(), str(uuid4())
+    def _claim(self, channel_id, token):
+        now = utcnow()
         with self.sessions.begin() as db:
             claimed = db.execute(
                 update(Channel)
@@ -36,7 +36,7 @@ class Collector:
                 )
             ).rowcount
             if not claimed:
-                return False
+                return None
             db.execute(
                 update(CollectionRun)
                 .where(
@@ -55,7 +55,109 @@ class Collector:
                 channel.backfill_before,
             )
             target = channel.catchup_target
+        return username, highwater, cursor, target
+
+    def _publish(self, channel_id, token, latest, posts, target, highwater, cursor):
+        with self.sessions.begin() as db:
+            # Fencing: a stale worker can never publish after another worker takes over.
+            fenced = db.execute(
+                update(Channel)
+                .where(
+                    Channel.id == channel_id,
+                    Channel.lease_token == token,
+                    Channel.lease_until > utcnow(),
+                )
+                .values(lease_token=None, lease_until=None)
+            ).rowcount
+            if not fenced:
+                return "skipped"
+            channel = db.get(Channel, channel_id)
+            captured = utcnow()
+            channel.title, channel.description = latest.title, latest.description
+            channel.subscribers, channel.last_error = latest.subscribers, None
+            channel.status = "catching_up" if cursor else "healthy"
+            channel.last_success_at = captured
+            channel.backfill_before = cursor
+            channel.catchup_target = target if cursor else None
+            if not cursor and posts:
+                # Advance only to the head at the START of a paginated catch-up.
+                # New arrivals during catch-up are scanned again on the next pass,
+                # so a busy channel cannot create a gap between preview pages.
+                channel.last_message_id = max(highwater, target)
+            channel.next_collection_at = captured + timedelta(
+                seconds=60 if cursor else self.interval
+            )
+            for parsed in posts.values():
+                post = db.scalar(
+                    select(Post).where(
+                        Post.channel_id == channel_id, Post.message_id == parsed.message_id
+                    )
+                )
+                if post is None:
+                    post = Post(channel_id=channel_id, message_id=parsed.message_id)
+                    db.add(post)
+                post.text, post.published_at, post.url = (
+                    parsed.text,
+                    parsed.published_at,
+                    parsed.url,
+                )
+                post.views, post.reactions, post.updated_at = (
+                    parsed.views,
+                    parsed.reactions,
+                    captured,
+                )
+                db.flush()
+                db.add(
+                    PostMetric(
+                        post_id=post.id,
+                        views=parsed.views,
+                        reactions=parsed.reactions,
+                        captured_at=captured,
+                    )
+                )
+            db.add(
+                ChannelMetric(
+                    channel_id=channel_id, subscribers=latest.subscribers, captured_at=captured
+                )
+            )
+            run = db.scalar(select(CollectionRun).where(CollectionRun.token == token))
+            run.status, run.finished_at, run.collected_count = "success", captured, len(posts)
+        logger.info("collection_success channel_id=%s posts=%s", channel_id, len(posts))
+        return "succeeded"
+
+    def _fail(self, channel_id, token, error):
+        with self.sessions.begin() as db:
+            db.execute(
+                update(Channel)
+                .where(
+                    Channel.id == channel_id,
+                    Channel.lease_token == token,
+                )
+                .values(
+                    status="error",
+                    last_error=error,
+                    lease_token=None,
+                    lease_until=None,
+                    next_collection_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            db.execute(
+                update(CollectionRun)
+                .where(CollectionRun.token == token, CollectionRun.status == "collecting")
+                .values(status="error", error=error, finished_at=utcnow())
+            )
+
+    async def collect(self, channel_id: int) -> bool:
+        # Preserve the existing single-channel API.
+        return await self._collect(channel_id) == "succeeded"
+
+    async def _collect(self, channel_id):
+        token = str(uuid4())
         try:
+            claim = await run_db(self._claim, channel_id, token)
+            if claim is None:
+                return "skipped"
+            username, highwater, cursor, target = claim
             # Every pass refreshes current posts, even during downtime catch-up.
             latest = await self.source.fetch(username)
             posts = {p.message_id: p for p in latest.posts}
@@ -81,122 +183,47 @@ class Collector:
                 cursor = before if needs_more else None
             else:
                 cursor = None
-            with self.sessions.begin() as db:
-                # Fencing: a stale worker can never publish after another worker takes over.
-                fenced = db.execute(
-                    update(Channel)
-                    .where(
-                        Channel.id == channel_id,
-                        Channel.lease_token == token,
-                        Channel.lease_until > utcnow(),
-                    )
-                    .values(lease_token=None, lease_until=None)
-                ).rowcount
-                if not fenced:
-                    return False
-                channel = db.get(Channel, channel_id)
-                captured = utcnow()
-                channel.title, channel.description = latest.title, latest.description
-                channel.subscribers, channel.last_error = latest.subscribers, None
-                channel.status = "catching_up" if cursor else "healthy"
-                channel.last_success_at = captured
-                channel.backfill_before = cursor
-                channel.catchup_target = target if cursor else None
-                if not cursor and posts:
-                    # Advance only to the head at the START of a paginated catch-up.
-                    # New arrivals during catch-up are scanned again on the next pass,
-                    # so a busy channel cannot create a gap between preview pages.
-                    channel.last_message_id = max(highwater, target)
-                channel.next_collection_at = captured + timedelta(
-                    seconds=60 if cursor else self.interval
-                )
-                for parsed in posts.values():
-                    post = db.scalar(
-                        select(Post).where(
-                            Post.channel_id == channel_id, Post.message_id == parsed.message_id
-                        )
-                    )
-                    if post is None:
-                        post = Post(channel_id=channel_id, message_id=parsed.message_id)
-                        db.add(post)
-                    post.text, post.published_at, post.url = (
-                        parsed.text,
-                        parsed.published_at,
-                        parsed.url,
-                    )
-                    post.views, post.reactions, post.updated_at = (
-                        parsed.views,
-                        parsed.reactions,
-                        captured,
-                    )
-                    db.flush()
-                    db.add(
-                        PostMetric(
-                            post_id=post.id,
-                            views=parsed.views,
-                            reactions=parsed.reactions,
-                            captured_at=captured,
-                        )
-                    )
-                db.add(
-                    ChannelMetric(
-                        channel_id=channel_id, subscribers=latest.subscribers, captured_at=captured
-                    )
-                )
-                run = db.scalar(select(CollectionRun).where(CollectionRun.token == token))
-                run.status, run.finished_at, run.collected_count = "success", captured, len(posts)
-            logger.info("collection_success channel_id=%s posts=%s", channel_id, len(posts))
-            return True
+            return await run_db(
+                self._publish, channel_id, token, latest, posts, target, highwater, cursor
+            )
+        except asyncio.CancelledError:
+            await run_db(self._fail, channel_id, token, "Collection interrupted; retry scheduled.")
+            raise
         except Exception as exc:
             error = (
                 str(exc) if isinstance(exc, SourceError) else "Collection failed; retry scheduled."
             )
-            # Do not log exception bodies: drivers/upstreams may embed credentials or content.
             logger.warning(
                 "collection_failed channel_id=%s type=%s", channel_id, type(exc).__name__
             )
-            with self.sessions.begin() as db:
-                db.execute(
-                    update(Channel)
+            await run_db(self._fail, channel_id, token, error)
+            return "failed"
+
+    def _due_ids(self):
+        with self.sessions() as db:
+            return list(
+                db.scalars(
+                    select(Channel.id)
                     .where(
-                        Channel.id == channel_id,
-                        Channel.lease_token == token,
+                        Channel.next_collection_at <= utcnow(),
+                        or_(Channel.lease_until.is_(None), Channel.lease_until < utcnow()),
                     )
-                    .values(
-                        status="error",
-                        last_error=error,
-                        lease_token=None,
-                        lease_until=None,
-                        next_collection_at=utcnow() + timedelta(minutes=15),
-                    )
+                    .order_by(Channel.next_collection_at)
+                    .limit(30)
                 )
-                db.execute(
-                    update(CollectionRun)
-                    .where(CollectionRun.token == token)
-                    .values(status="error", error=error, finished_at=utcnow())
-                )
-            return False
+            )
 
     async def collect_due(self):
+        result = dict(attempted=0, succeeded=0, failed=0, skipped=0, busy=False, collected=0)
         if self.local_lock.locked():
-            return {"busy": True, "collected": 0}
+            return {**result, "busy": True}
         async with self.local_lock:
-            with self.sessions() as db:
-                ids = list(
-                    db.scalars(
-                        select(Channel.id)
-                        .where(
-                            Channel.next_collection_at <= utcnow(),
-                            or_(Channel.lease_until.is_(None), Channel.lease_until < utcnow()),
-                        )
-                        .order_by(Channel.next_collection_at)
-                        .limit(30)
-                    )
-                )
-            count = 0
-            for channel_id in ids:
-                count += await self.collect(channel_id)
-            return {"busy": False, "collected": count}
+            for channel_id in await run_db(self._due_ids):
+                outcome = await self._collect(channel_id)
+                result[outcome] += 1
+            result["attempted"] = result["succeeded"] + result["failed"]
+            result["collected"] = result["succeeded"]
+            return result
 
     async def run(self):
         while True:

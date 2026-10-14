@@ -15,6 +15,8 @@ class SourceError(Exception):
 
 def normalize_username(value: str) -> str:
     value = value.strip()
+    if value.lower().startswith(("t.me/", "telegram.me/")):
+        value = "https://" + value
     if value.startswith(("https://", "http://")):
         parsed = urlparse(value)
         if parsed.netloc.lower() not in {"t.me", "telegram.me"} or parsed.query or parsed.fragment:
@@ -76,20 +78,24 @@ def parse_channel(html: str, username: str) -> ParsedChannel:
         if kind and "subscriber" in kind.get_text().lower() and value:
             subscribers = parse_count(value.get_text())
     posts = {}
-    nodes = soup.select(".tgme_widget_message[data-post]")
+    nodes = soup.select(".tgme_channel_history .tgme_widget_message")
     for node in nodes:
         identity = node.get("data-post", "").split("/")
-        if len(identity) != 2 or identity[0].lower() != username or not identity[1].isdigit():
+        if len(identity) == 2 and identity[0].lower() != username:
             continue
+        if len(identity) != 2 or not identity[1].isdigit():
+            raise SourceError("Telegram preview format changed: invalid message identity.")
         timestamp = node.select_one(".tgme_widget_message_date time[datetime]")
         if timestamp is None:
-            continue
+            raise SourceError("Telegram preview format changed: message timestamp missing.")
         try:
             published = datetime.fromisoformat(timestamp["datetime"].replace("Z", "+00:00"))
             if published.tzinfo is None:
-                continue
-        except ValueError:
-            continue
+                raise ValueError("Missing timezone")
+        except ValueError as exc:
+            raise SourceError(
+                "Telegram preview format changed: invalid message timestamp."
+            ) from exc
         content = node.select_one(".tgme_widget_message_text")
         if content:
             for br in content.find_all("br"):
@@ -101,8 +107,11 @@ def parse_channel(html: str, username: str) -> ParsedChannel:
         for reaction in node.select(".tgme_reaction:not(.tgme_reaction_paid)"):
             count = reaction.select_one(".count")
             label = count.get_text() if count else reaction.get_text()
-            match = re.search(r"([\d.,]+\s*[KMB]?)\s*$", label, re.IGNORECASE)
-            reaction_values.append(parse_count(match.group(1)) if match else None)
+            if count:
+                reaction_values.append(parse_count(label))
+            else:
+                match = re.search(r"(\d[\d.,\s]*[KMB]?)\s*$", label, re.IGNORECASE)
+                reaction_values.append(parse_count(match.group(1)) if match else None)
         reactions = (
             sum(reaction_values)
             if reaction_values and all(v is not None for v in reaction_values)

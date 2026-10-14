@@ -1,8 +1,31 @@
+import asyncio
 from datetime import UTC, datetime
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.types import DateTime, TypeDecorator
+
+
+async def run_db(operation, *args, on_cancel=None):
+    """Run a whole session unit in one thread; join it even on task cancellation.
+
+    Cancellation cannot stop a database thread. Wait for commit/rollback/close
+    before cleanup or shutdown; admission units can supply result-based cleanup.
+    """
+    task = asyncio.create_task(asyncio.to_thread(operation, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                break
+        if not task.cancelled() and task.exception() is None and on_cancel:
+            await run_db(on_cancel, task.result())
+        raise
 
 
 def utcnow():

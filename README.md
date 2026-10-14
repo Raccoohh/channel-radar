@@ -97,6 +97,17 @@ Transient source failures retry up to three times per page with bounded delays a
 failed collections retry after 15 minutes. After process death, the next worker recovers
 expired leases and marks abandoned runs as interrupted.
 
+Synchronous database work in async routes and workers runs as complete transaction/session
+units in threads. Sessions are opened and closed in that thread; no transaction spans HTTP.
+Cancellation waits for an active DB unit to finish before cleanup: a committed observation
+stays successful, while an interrupted fetch releases its lease with a retryable error.
+Shutdown therefore may wait for a running database operation; a forced process kill still
+uses lease recovery. PostgreSQL/network outages can delay cleanup.
+
+If a real message has a missing/invalid identity or timestamp, the entire preview is rejected.
+No partial observations or completeness boundary are committed; the next scheduled retry
+can recover the gap. Service notices are not treated as messages.
+
 Private, nonexistent, restricted and preview-disabled channels may be indistinguishable
 without Telegram credentials; the UI says that public preview is unavailable.
 Rounded K/M counts are converted to integers, still representing **rounded source data**.
@@ -114,6 +125,10 @@ The source/model/prompt-version fingerprint caches successful results for six ho
 global 90-second admission cooldown and a daily attempt cap bound quota consumption.
 There is a 35-second provider timeout, no automatic expensive AI retries, and explicit
 handling of 429, HTTP failures, missing key, blocked/truncated or malformed output.
+Provider failures and cooperative cancellation end the attempt in an error state and still
+count toward the budget. Cancellation after a successful commit preserves the cached result.
+Abrupt process death or an unavailable database can prevent terminal-state cleanup; such
+attempts are not cached and still count toward the daily cap.
 An older saved digest remains visible with its generation time. Provider failure never
 prevents access to the rest of the dashboard. Media content is not sent to Gemini.
 The free Gemini tier may use input/output to improve Google's products; only public channel
@@ -180,6 +195,15 @@ The external trigger wakes Render and waits for due collection; in-process sched
 fast initial collection while the process is awake. Persistent due dates and leases support
 recovery after downtime. Neither mechanism guarantees collection during provider outages.
 
+`POST /internal/collect` returns `attempted`, `succeeded`, `failed`, `skipped`, `busy` and
+`collected` (a compatibility alias of `succeeded`). `attempted` counts successful and failed
+attempts; lease/cooldown races are skipped. HTTP 200 with zero attempts means nothing was due,
+not that ingestion occurred. HTTP 503 means at least one attempt failed, including partial
+success; HTTP 409 means this process already has a collection cycle running. Both make the
+GitHub workflow fail. The collection POST is deliberately not automatically retried: a second
+call during the failure cooldown could otherwise turn a failed ingestion into a green no-op.
+Inspect channel health/run history before manually rerunning a busy or failed workflow.
+
 ## Scope and limitations
 
 Public shared workspace; no user accounts or roles, as requested. Up to ten channels,
@@ -193,6 +217,8 @@ An authenticated scheduler does not make a public demo immune to abuse. Channel 
 is bounded, expensive requests are throttled, hosts are fixed, redirects are not followed,
 and HTML is rendered as escaped text with a restrictive CSP. Production database credentials
 must never be shared publicly. Long-term snapshot retention/archival is an operator task.
+POST bodies are limited to 4,096 actual ASGI bytes, including streams without Content-Length;
+oversized or malformed length headers are rejected early. JSON and HTML forms share the limit.
 
 [ADRs](docs/adr/) · [Agent conventions](CLAUDE.md) · [Interview preparation](docs/INTERVIEW.md)
 · [Submission message](docs/SUBMISSION.md)

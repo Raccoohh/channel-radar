@@ -23,6 +23,12 @@ Collection publishes only with an owned, unexpired fencing token. Never keep a d
 transaction open across HTTP. Catch-up high-water advances only to its saved initial target.
 Control row admission and budget checks stay in the same transaction. No secret/exception-body
 logging. Migration revisions must be self-contained; do not call current model create_all.
+In async code, use `run_db` for complete synchronous DB units; create and close each Session
+inside that unit. Never pass a live Session to another thread. Cancellation must wait for
+the active DB unit before cleanup; admission units need cleanup for a committed reservation.
+Do not overwrite a committed success during cancellation. Malformed real Telegram messages
+fail the whole observation; never advance catch-up boundaries across a parsing gap.
+Scheduler failures and busy responses must stay distinguishable from a successful no-op.
 
 ## Before delivery
 

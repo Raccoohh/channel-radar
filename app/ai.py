@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -7,7 +8,7 @@ import httpx
 from sqlalchemy import func, select, update
 
 from app.analytics import period_start
-from app.db import utcnow
+from app.db import run_db, utcnow
 from app.models import Control, Digest, Post
 
 logger = logging.getLogger(__name__)
@@ -51,14 +52,22 @@ class GeminiProvider:
                 logger.warning("Gemini request failed with HTTP %s", response.status_code)
                 raise AIUnavailable("AI provider is unavailable. The dashboard remains available.")
             data = response.json()
+            if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
+                raise ValueError("Invalid candidates")
             candidate = data["candidates"][0]
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("content"), dict):
+                raise ValueError("Invalid candidate content")
+            parts = candidate["content"].get("parts")
+            if not isinstance(parts, list) or any(
+                not isinstance(p, dict)
+                or ("text" in p and not isinstance(p["text"], str))
+                or ("thought" in p and not isinstance(p["thought"], bool))
+                for p in parts
+            ):
+                raise ValueError("Invalid content parts")
             if candidate.get("finishReason") not in {None, "STOP"}:
                 raise AIUnavailable("AI response was incomplete or blocked. Please try later.")
-            text = "\n".join(
-                p["text"]
-                for p in candidate["content"]["parts"]
-                if "text" in p and not p.get("thought")
-            )
+            text = "\n".join(p["text"] for p in parts if "text" in p and not p.get("thought"))
             if not text.strip() or len(text) > 20000:
                 raise ValueError("Invalid response size")
             return text.strip()
@@ -73,7 +82,7 @@ class DigestService:
         self.sessions, self.provider = sessions, provider
         self.model, self.daily_limit = model, daily_limit
 
-    async def generate(self, channel_id, days):
+    def _prepare(self, channel_id, days):
         now = utcnow()
         with self.sessions.begin() as db:
             posts = db.scalars(
@@ -115,7 +124,7 @@ class DigestService:
                 .order_by(Digest.id.desc())
             )
             if cached:
-                return cached
+                return cached, None
             # Serialize provider calls across processes and channels, including failed attempts.
             admitted = db.execute(
                 update(Control)
@@ -145,15 +154,42 @@ class DigestService:
             )
             db.add(digest)
             db.flush()
-            digest_id = digest.id
-        try:
-            content = await self.provider.generate(context)
-        except AIUnavailable as exc:
-            with self.sessions.begin() as db:
-                digest = db.get(Digest, digest_id)
-                digest.status, digest.content = "error", str(exc)
-            raise
+        return digest, context
+
+    def _finish(self, digest_id, status, content):
         with self.sessions.begin() as db:
             digest = db.get(Digest, digest_id)
-            digest.status, digest.content = "ready", content
+            if digest.status == "generating":
+                digest.status, digest.content = status, content
         return digest
+
+    def _cancel_prepared(self, prepared):
+        digest, context = prepared
+        if context is not None:
+            self._finish(digest.id, "error", "AI request interrupted. Please try again later.")
+
+    async def generate(self, channel_id, days):
+        digest, context = await run_db(
+            self._prepare, channel_id, days, on_cancel=self._cancel_prepared
+        )
+        if context is None:
+            return digest
+        try:
+            content = await self.provider.generate(context)
+            if not isinstance(content, str) or not content.strip() or len(content) > 20000:
+                raise AIUnavailable("AI response unavailable or invalid. Please try again later.")
+            return await run_db(self._finish, digest.id, "ready", content)
+        except asyncio.CancelledError:
+            await run_db(
+                self._finish, digest.id, "error", "AI request interrupted. Please try later."
+            )
+            raise
+        except Exception as exc:
+            error = (
+                str(exc)
+                if isinstance(exc, AIUnavailable)
+                else "AI provider is unavailable. The dashboard remains available."
+            )
+            logger.warning("digest_failed type=%s", type(exc).__name__)
+            await run_db(self._finish, digest.id, "error", error)
+            raise AIUnavailable(error) from exc
