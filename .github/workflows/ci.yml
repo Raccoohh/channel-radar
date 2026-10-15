@@ -17,7 +17,7 @@ jobs:
           cache-dependency-path: requirements.lock
       - run: pip install -r requirements.lock && pip install --no-deps -e .
       - run: ruff check . && ruff format --check .
-      - run: pytest
+      - run: python -m pytest
       - run: alembic upgrade head && alembic check && alembic downgrade base && alembic upgrade head
   postgres:
     runs-on: ubuntu-latest
